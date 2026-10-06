@@ -1,0 +1,25 @@
+{
+  "name": "xfiler",
+  "version": "0.1.0",
+  "description": "Real BSC mainnet micro-fills on tokenized stocks (bStocks, Ondo, xStocks): quote vs fill, latency, failures, tx hashes. Exposed as an MCP tool: get_fill_stats.",
+  "type": "module",
+  "license": "MIT",
+  "engines": { "node": ">=20" },
+  "scripts": {
+    "probe": "tsx src/cli.ts",
+    "mcp": "tsx src/mcp.ts",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.0.0",
+    "viem": "^2.21.0",
+    "zod": "^3.23.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.6.0",
+    "vitest": "^2.1.0"
+  }
+}

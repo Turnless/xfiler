@@ -1,0 +1,8 @@
+node_modules/
+.env
+KILL
+data/api-calls.jsonl
+# Raw venue responses: redacted, but their shapes are unverified, so they may carry identifiers
+# nobody anticipated. Review a sample by hand before committing it (git add -f).
+data/raw/
+*.log
