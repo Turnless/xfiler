@@ -9,7 +9,8 @@ import { UNRESOLVED, type Adapter, type FillRecord } from "./types.js";
  * dry-run default, per-trade cap, exposure cap, daily count, cooldown, loss budget,
  * unresolved orders, kill-switch (fail-closed). Returns the failed gates; empty means the order may go.
  * A sell that closes a position the ledger knows about only faces dry-run, kill-switch,
- * mock-adapter and unresolved-order gates: getting out must never be blocked by the caps.
+ * mock-adapter, unresolved-order and quote-vs-reference gates: getting out must never be blocked
+ * by the caps, but a sell quoted far below the reference price would give the position away.
  */
 export interface GateInput {
   cfg: Config;
@@ -23,6 +24,8 @@ export interface GateInput {
   tokenAddress?: string; // sell: which position it closes
   adapter?: Adapter; // the executor in use; defaults to "baw"
   allowMock?: boolean; // tests only: let the mock venue pass and read mock rows as the ledger
+  /** Quote vs the provider's reference price, bps, positive = worse; null = no reference. Omitted = not checked. */
+  vsReferenceBps?: number | null;
 }
 
 const TRUTHY = /^(1|true|yes)$/i;
@@ -171,6 +174,10 @@ export function checkGates(i: GateInput): string[] {
   if (i.liveFlag && (i.adapter ?? "baw") === "mock" && !i.allowMock) failed.push("MOCK_ADAPTER"); // fake venue never trades live
   if (live.some((r) => UNRESOLVED.includes(r.status))) failed.push("UNRESOLVED_ORDER"); // run `reconcile` first
   if (isKillSwitchActive(i.cfg, i.killFile ?? i.cfg.killFile)) failed.push("KILL_SWITCH_ACTIVE");
+  // A quote can look normal (its own slippage field fine) and still be far off the real price:
+  // live on 10 Oct an xStocks SPYx quote was 11.6x its reference. Can't compare: fail closed.
+  if (i.vsReferenceBps === null && i.cfg.requireReferencePrice) failed.push("NO_REFERENCE_PRICE");
+  if (typeof i.vsReferenceBps === "number" && !(i.vsReferenceBps <= i.cfg.maxVsReferenceBps)) failed.push("QUOTE_VS_REFERENCE");
   if (closesOpenBuy(rows, i.side, i.tokenAddress, i.qty)) return failed;
 
   if (i.usd > i.cfg.maxUsdPerFill) failed.push("PER_FILL_CAP");

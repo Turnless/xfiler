@@ -34,6 +34,8 @@ export interface Config {
   walletAddress: string;
   slippage: string; // percent, sent to `baw --slippage`
   maxQuoteSlippage: number; // fraction: abort if the quote's own slippage is above this
+  maxVsReferenceBps: number; // refuse a live order whose quote is this much worse than the provider's reference price
+  requireReferencePrice: boolean; // no reference price to compare with: refuse (true, default) or allow
   bnbUsd: number; // only used to price gas into the loss budget; 0 = gas not counted
   dataDir: string;
 }
@@ -64,6 +66,8 @@ export function loadConfig(envFile = join(PROJECT_ROOT, ".env")): Config {
     walletAddress: e.WALLET_ADDRESS || "",
     slippage,
     maxQuoteSlippage: num("MAX_QUOTE_SLIPPAGE", 0.01),
+    maxVsReferenceBps: num("MAX_VS_REFERENCE_BPS", 100),
+    requireReferencePrice: e.REQUIRE_REFERENCE_PRICE !== "false",
     bnbUsd: num("BNB_USD", 0),
     dataDir: resolve(PROJECT_ROOT, e.DATA_DIR || "data"),
   };

@@ -6,6 +6,7 @@ import type { ReceiptFill } from "./chain.js";
 import { BSC_BNB, BSC_USDT, type Config } from "./config.js";
 import { checkGates } from "./guards.js";
 import { usSession } from "./session.js";
+import { vsReferenceBps } from "./stats.js";
 import { appendJsonl, fillsPath, floor8, readFills, saveRawSample } from "./store.js";
 import type { BalanceSnapshot, FillRecord, OrderState, Quote, RwaToken, Side } from "./types.js";
 import { PROVIDER_TYPE, type Provider } from "./types.js";
@@ -167,6 +168,7 @@ export async function runAttempt(i: AttemptInput): Promise<FillRecord> {
     failed = checkGates({
       cfg: i.cfg, liveFlag: i.liveFlag, usd: rec.usdNotional, side: i.side, history: readFills(i.cfg.dataDir),
       now: startedAt, qty: i.qty, tokenAddress: i.token.contractAddress, adapter: i.exec.name, allowMock: i.allowMock,
+      vsReferenceBps: vsReferenceBps(rec),
     });
   } catch (err) {
     failed = [`GATE_ERROR: ${msg(err)}`];
@@ -356,6 +358,20 @@ export async function reconcileRow(row: FillRecord, exec: Executor, readReceipt:
   if (state.status === "PENDING") return null;
   const rec: FillRecord = { ...row, error: null, reconciledAt: new Date().toISOString() };
   await applyState(rec, state, readReceipt);
+  return rec;
+}
+
+/**
+ * Resolve an unresolved row from a tx hash when the venue keeps saying PENDING although the swap
+ * is on chain (seen live on 10 Oct: a bStocks buy settled on chain, the venue still said PENDING).
+ * Accepted only if the receipt itself proves the fill (tx succeeded, the received token flowed in,
+ * and for a buy USDT left the wallet); otherwise it throws and nothing is recorded.
+ */
+export async function reconcileFromTx(row: FillRecord, txHash: string, readReceipt: ReceiptReader): Promise<FillRecord> {
+  if (!/^0x[0-9a-fA-F]{64}$/.test(txHash)) throw new Error(`not a tx hash: "${txHash}"`);
+  const rec: FillRecord = { ...row, error: null, reconciledAt: new Date().toISOString(), resolvedBy: "receipt" };
+  await applyState(rec, { orderId: row.orderId ?? "", status: "FINISHED", txHash, raw: null }, readReceipt);
+  if (rec.fillSource !== "receipt") throw new Error(`tx ${txHash} does not prove this fill: ${rec.error ?? "no receipt fill"}`);
   return rec;
 }
 

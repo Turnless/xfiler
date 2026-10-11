@@ -24,3 +24,10 @@ Docs fix:     what would have saved the time
 - `npx skills add` installs hung or were killed several times and tried to install to ~16 agents; `-a claude-code` was needed.
 
 ## Log
+## 2026-10-06 22:22 UTC fetch failed on token list
+on getting things set, i ran npm run probe tokens -- --provider ondo command to connect to Binance but i receive a fetch failed error it's look like it's my ISP that's blocking me to connect to binance. Now i have to switch my carrier network and try again.
+- When: 2026-10-06, 22:22 and 22:23 UTC (two attempts)
+- Exact error: fetch failed. The hidden cause was UND_ERR_CONNECT_TIMEOUT.
+- How long each attempt took: about 10.8 seconds before failing (from data/api-calls.jsonl)
+- What was blocked: www.binance.com, web3.binance.com, api.binance.com
+- What worked: the BNB Chain node, bscscan.com, github.com

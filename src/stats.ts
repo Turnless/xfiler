@@ -1,5 +1,5 @@
 import { ledger } from "./store.js";
-import { UNRESOLVED, type FillRecord, type Provider, type ProviderSession, type Session, type Side } from "./types.js";
+import { UNRESOLVED, toProviderSession, type FillRecord, type Provider, type ProviderSession, type Session, type Side } from "./types.js";
 
 export interface StatsFilter {
   provider?: Provider;
@@ -71,11 +71,25 @@ export function failureCode(error: string | null, status: string): string {
   return CODES.find(([re]) => re.test(error))?.[1] ?? "OTHER";
 }
 
+// Quote failures: the venue's message stays in the row; these name the common ones (first match wins).
+// Messages seen live on 2026-10-10: "From token value greater than 5 USD", "No liquidity available, ...".
+const QUOTE_CODES: Array<[RegExp, string]> = [
+  [/token value (greater|less) than|minimum|too small/i, "QUOTE_MIN_SIZE"],
+  [/no liquidity/i, "QUOTE_NO_LIQUIDITY"],
+  [/timed out|timeout|ETIMEDOUT/i, "QUOTE_TIMEOUT"],
+];
+
+/** Short code for a QUOTE_FAILED row; anything unrecognised keeps its own prefix (e.g. QUOTE_NO_AMOUNT). */
+export function quoteFailureCode(error: string | null): string {
+  const e = error ?? "QUOTE_FAILED";
+  return QUOTE_CODES.find(([re]) => re.test(e))?.[1] ?? e.split(":")[0]!.trim();
+}
+
 const matches = (filter: StatsFilter) => (r: FillRecord) =>
   (!filter.provider || r.provider === filter.provider) &&
   (!filter.symbol || r.symbol.toLowerCase() === filter.symbol.toLowerCase()) &&
   (!filter.session || r.session === filter.session) &&
-  (!filter.providerSession || r.providerSession === filter.providerSession) &&
+  (!filter.providerSession || (r.providerSession ?? toProviderSession(r.assetStatus)) === filter.providerSession) &&
   (!filter.side || r.side === filter.side);
 
 /** Quote price vs reference, bps, positive = worse for the trader. Null without a reference on the row. */
@@ -105,7 +119,7 @@ function summarizeQuotes(all: FillRecord[], filter: StatsFilter, includeMock: bo
   const usable = rows.filter((r) => r.status !== "QUOTE_FAILED");
   const reasons: Record<string, number> = {};
   for (const r of failed) {
-    const k = (r.error ?? "QUOTE_FAILED").split(":")[0]!.trim();
+    const k = quoteFailureCode(r.error);
     reasons[k] = (reasons[k] ?? 0) + 1;
   }
   const lat = nums(rows.map((r) => r.quoteLatencyMs));

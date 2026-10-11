@@ -2,11 +2,12 @@ import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import type { MarketInfo } from "../src/adapters/market.js";
 import { MockExecutor } from "../src/adapters/mock.js";
 import { VenueRejected, type Executor } from "../src/adapters/types.js";
 import { BSC_USDT, PROJECT_ROOT, loadConfig, type Config } from "../src/config.js";
 import { checkGates, estimatedLossUsd, isKillSwitchActive, openExposureUsd, openQty, parsePositive } from "../src/guards.js";
-import { reconcileRow, runAttempt, sellQtyAfterBuy, type AttemptInput, type ReceiptReader } from "../src/probe.js";
+import { reconcileFromTx, reconcileRow, runAttempt, sellQtyAfterBuy, type AttemptInput, type ReceiptReader } from "../src/probe.js";
 import { percentile, summarize } from "../src/stats.js";
 import { appendJsonl, fillsPath, floor8, latestById, ledger, readFills, renderTable } from "../src/store.js";
 import type { FillRecord, RwaToken } from "../src/types.js";
@@ -24,7 +25,7 @@ const cfg = (over: Partial<Config> = {}): Config => {
     live: true, maxUsdPerFill: 5, maxOpenUsd: 8, maxFillsPerDay: 12, cooldownSeconds: 20, budgetUsd: 3,
     killSwitchFailClosed: true, killFile: join(dir, "KILL"), adapter: "mock", bawBin: "baw", bscRpcUrl: "",
     walletAddress: "0x2222222222222222222222222222222222222222", slippage: "1", maxQuoteSlippage: 0.01, bnbUsd: 0,
-    dataDir: dir, ...over,
+    maxVsReferenceBps: 100, requireReferencePrice: false, dataDir: dir, ...over,
   };
 };
 
@@ -108,6 +109,21 @@ describe("guards", () => {
     process.env.KILL_SWITCH = "1";
     expect(checkGates({ ...g, qty: "0.04" })).toContain("KILL_SWITCH_ACTIVE");
   });
+  it("refuses a quote too far from the reference price, and a missing reference when required", () => {
+    expect(checkGates({ ...base(), vsReferenceBps: 20 })).toEqual([]); // Ondo-like quote
+    expect(checkGates({ ...base(), vsReferenceBps: 100 })).toEqual([]); // exactly at the limit
+    expect(checkGates({ ...base(), vsReferenceBps: 106160.8 })).toContain("QUOTE_VS_REFERENCE"); // the live SPYx quote
+    expect(checkGates({ ...base(), vsReferenceBps: NaN })).toContain("QUOTE_VS_REFERENCE");
+    expect(checkGates({ ...base(), vsReferenceBps: null })).toEqual([]); // test cfg: reference not required
+    expect(checkGates({ ...base(), cfg: cfg({ requireReferencePrice: true }), vsReferenceBps: null })).toContain("NO_REFERENCE_PRICE");
+    expect(checkGates({ ...base(), cfg: cfg({ requireReferencePrice: true }) })).toEqual([]); // omitted = not checked
+  });
+  it("a closing sell is still refused when its quote is far below the reference", () => {
+    const now = new Date("2026-10-07T15:00:05Z");
+    const g = { ...base(), history: [row({ fillAmount: "0.04" })], now, side: "sell" as const, tokenAddress: token.contractAddress, qty: "0.04" };
+    expect(checkGates({ ...g, vsReferenceBps: 30 })).toEqual([]);
+    expect(checkGates({ ...g, vsReferenceBps: 5000 })).toContain("QUOTE_VS_REFERENCE");
+  });
   it("validates CLI amounts up front", () => {
     for (const bad of ["NaN", "abc", "", " ", "-1", "0", "Infinity", undefined]) expect(() => parsePositive("--usd", bad)).toThrow(/--usd/);
     expect(parsePositive("--usd", "3")).toBe(3);
@@ -141,6 +157,24 @@ describe("ledger", () => {
 });
 
 describe("runAttempt", () => {
+  it("a quote far off the reference price is recorded but never sent", async () => {
+    const market = (ref: number) => async (): Promise<MarketInfo> => ({
+      marketStatus: "closed", marketReason: null, assetStatus: null, assetReason: null, providerSession: null,
+      referencePrice: ref, referenceMultiplier: "1", marketError: null,
+    });
+    const swap = vi.fn(async () => ({ orderId: "o1", raw: {} }));
+    // mock quotes at 100 per token; a reference of 8.6 makes the quote ~11.6x the reference, like SPYx on 10 Oct
+    const bad = await attempt(cfg(), fakeExec({ swap }), { market: market(8.6) });
+    expect(bad).toMatchObject({ status: "ABORTED", dryRun: true, error: "QUOTE_VS_REFERENCE" });
+    expect(bad.quotePrice).toBeCloseTo(100, 6);
+    expect(swap).not.toHaveBeenCalled();
+    expect(await attempt(cfg(), fakeExec({ swap }), { market: market(99.9) })).toMatchObject({ status: "FINISHED" }); // ~10 bps: fine
+    expect(swap).toHaveBeenCalledTimes(1);
+    const none = await attempt(cfg({ requireReferencePrice: true }), fakeExec({ swap })); // no market lookup: no reference
+    expect(none).toMatchObject({ status: "ABORTED", error: "NO_REFERENCE_PRICE" });
+    expect(swap).toHaveBeenCalledTimes(1);
+  });
+
   it("full buy + sell round trip, sell exempt from the cooldown", async () => {
     const c = cfg();
     const calls: Array<[string, string | null]> = [];
@@ -193,6 +227,20 @@ describe("runAttempt", () => {
     expect(fixed).toMatchObject({ id: r.id, status: "FINISHED", fillAmount: "0.0396" });
     appendJsonl(fillsPath(c.dataDir), fixed);
     expect((await attempt(c, fakeExec({ swap }), { now: later })).status).toBe("FINISHED");
+  });
+
+  it("a row the venue still calls PENDING can be resolved from a tx hash, only if the receipt proves it", async () => {
+    const c = cfg();
+    const pending = fakeExec({ order: async (id) => ({ orderId: id, status: "PENDING", txHash: null, raw: {} }) });
+    const r = await attempt(c, pending, { pollTimeoutMs: 20 });
+    expect(r.status).toBe("PENDING");
+    await expect(reconcileFromTx(r, "0x123", reader)).rejects.toThrow(/not a tx hash/);
+    const noProof: ReceiptReader = async () => { throw new Error("no Transfer of USDT from the wallet in this tx"); };
+    await expect(reconcileFromTx(r, TX, noProof)).rejects.toThrow(/does not prove this fill/);
+    const fixed = await reconcileFromTx(r, TX, reader);
+    expect(fixed).toMatchObject({ id: r.id, status: "FINISHED", txHash: TX, fillAmount: "0.0396", fillSource: "receipt", resolvedBy: "receipt", error: null });
+    appendJsonl(fillsPath(c.dataDir), fixed);
+    expect(openQty(readFills(c.dataDir), token.contractAddress)).toBe("0.0396"); // the sell-back now knows the position
   });
 
   it("a poll exception after submission yields UNKNOWN", async () => {

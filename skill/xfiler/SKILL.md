@@ -7,7 +7,7 @@ description: Check observed execution quality (real fills, not quotes) for token
 
 Call the `get_fill_stats` MCP tool (server: `npm run mcp` in this repo) before placing a tokenized-stock order.
 
-Inputs, all optional: `provider` (bstock | ondo | xstock), `symbol`, `session` (regular | pre | post | overnight | weekend, New York time), `providerSession` (premarket | regular | postmarket | overnight | closed | pause, the provider's own label at quote time), `side`, `mode` (fills | quotes, default fills).
+Inputs, all optional: `provider` (bstock | ondo | xstock), `symbol`, `session` (regular | pre | post | overnight | weekend, New York time), `providerSession` (premarket | regular | postmarket | overnight | closed | pause | offhours, the provider's own label at quote time; `offhours` is undocumented but seen live on weekends), `side`, `mode` (fills | quotes, default fills).
 
 Output with `mode: "fills"`: attempts, filled, failed, `pending` (orders whose outcome is not known yet), `quoteFailures` (quotes that came back unusable, nothing sent), success rate, slippage vs quote in bps (median, p95, worst), settle latency, `failureReasons` as short codes (e.g. `SLIPPAGE`, `POLL_TIMEOUT`, `SWAP_REJECTED`, `RECEIPT_DECODE_FAILED`), the last 50 tx hashes, and a `note`.
 
