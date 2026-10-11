@@ -1,6 +1,6 @@
 import { BSC_CHAIN_ID } from "../config.js";
 import { logApiCall } from "../store.js";
-import { PROVIDER_SESSIONS, type ProviderSession, type RwaToken } from "../types.js";
+import { toProviderSession, type ProviderSession, type RwaToken } from "../types.js";
 
 const BASE = "https://www.binance.com/bapi/defi";
 // From the binance-tokenized-securities-info skill: API 3, 4 and 5. Documented for Ondo; other
@@ -77,8 +77,7 @@ export async function lookupMarket(token: RwaToken, dataDir: string, timeoutMs =
   if (typeof asset?.marketStatus === "string") {
     out.assetStatus = asset.marketStatus;
     out.assetReason = reason(asset);
-    const s = asset.marketStatus.toLowerCase();
-    out.providerSession = (PROVIDER_SESSIONS as readonly string[]).includes(s) ? (s as ProviderSession) : null;
+    out.providerSession = toProviderSession(asset.marketStatus);
   } else if (a.status === "rejected") fail("asset", a);
   else errors.push("asset: no marketStatus");
 

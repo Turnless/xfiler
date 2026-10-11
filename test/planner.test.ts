@@ -27,7 +27,7 @@ const cfg = (over: Partial<Config> = {}): Config => {
     live: true, maxUsdPerFill: 5, maxOpenUsd: 8, maxFillsPerDay: 12, cooldownSeconds: 20, budgetUsd: 3,
     killSwitchFailClosed: true, killFile: join(dir, "KILL"), adapter: "mock", bawBin: "baw", bscRpcUrl: "",
     walletAddress: "0x2222222222222222222222222222222222222222", slippage: "1", maxQuoteSlippage: 0.01, bnbUsd: 0,
-    dataDir: dir, ...over,
+    maxVsReferenceBps: 100, requireReferencePrice: false, dataDir: dir, ...over,
   };
 };
 const token: RwaToken = { chainId: "56", contractAddress: "0x1111111111111111111111111111111111111111", symbol: "TSLAon", ticker: "TSLA", type: 1, multiplier: "1" };
@@ -192,11 +192,11 @@ describe("quote-only stats", () => {
     const c = cfg();
     const market = async (): Promise<MarketInfo> => ({
       marketStatus: "open", marketReason: "TRADING", assetStatus: "regular", assetReason: "TRADING", providerSession: "regular",
-      referencePrice: 99, referenceMultiplier: "1", marketError: null,
+      referencePrice: 99.5, referenceMultiplier: "1", marketError: null,
     });
     await attempt(c, fakeExec({ name: "baw" }), { liveFlag: false, market });
     const [saved] = readFills(c.dataDir);
-    expect(saved).toMatchObject({ adapter: "baw", status: "DRY_RUN", session: expect.any(String), providerSession: "regular", referencePrice: 99 });
+    expect(saved).toMatchObject({ adapter: "baw", status: "DRY_RUN", session: expect.any(String), providerSession: "regular", referencePrice: 99.5 });
     expect(saved!.quoteLatencyMs).toEqual(expect.any(Number));
     expect(summarize(readFills(c.dataDir), {}, false, "quotes")).toMatchObject({ quotes: 1, usable: 1 });
   });
@@ -219,6 +219,27 @@ describe("quote-only stats", () => {
     expect(summarize(rows, { providerSession: "overnight" }, false, "quotes").quotes).toBe(1);
     expect(vsReferenceBps(q({ side: "sell", quotePrice: 99, referencePrice: 100, referenceMultiplier: "1" }))).toBeCloseTo(101.01, 1);
     expect(summarize(rows).mode).toBe("fills"); // default unchanged
+  });
+
+  it("names the live venue's quote errors with short codes", () => {
+    const err = (m: string) => `QUOTE_ERROR: ${JSON.stringify({ code: 1, name: "SERVICE_ERROR", message: m })}`;
+    const rows = [
+      q({ status: "QUOTE_FAILED", quotePrice: null, error: err("From token value greater than 5 USD") }),
+      q({ status: "QUOTE_FAILED", quotePrice: null, error: err("No liquidity available, please try again later.") }),
+      q({ status: "QUOTE_FAILED", quotePrice: null, error: "QUOTE_ERROR: market-order quote: timed out after 60000 ms" }),
+      q({ status: "QUOTE_FAILED", quotePrice: null, error: "QUOTE_SLIPPAGE_HIGH: 0.02 > 0.01" }),
+      q({ status: "QUOTE_FAILED", quotePrice: null, error: err("something new") }),
+    ];
+    expect(summarize(rows, {}, false, "quotes").quoteFailureReasons).toEqual({
+      QUOTE_MIN_SIZE: 1, QUOTE_NO_LIQUIDITY: 1, QUOTE_TIMEOUT: 1, QUOTE_SLIPPAGE_HIGH: 1, QUOTE_ERROR: 1,
+    });
+  });
+
+  it("knows the undocumented 'offhours' session, also on rows saved before it was known", () => {
+    expect(getFillStatsArgs.parse({ providerSession: "offhours" })).toEqual({ providerSession: "offhours" });
+    const old = q({ providerSession: null, assetStatus: "offhours" }); // saved before the fix: only assetStatus was set
+    expect(summarize([old], { providerSession: "offhours" }, false, "quotes").quotes).toBe(1);
+    expect(renderTable([{ ...old, dryRun: false }])).toContain("| offhours |");
   });
 
   it("the table shows the provider session", () => {

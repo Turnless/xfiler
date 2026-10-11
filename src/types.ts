@@ -77,6 +77,7 @@ export interface FillRecord {
   gasUsed?: string; // from the receipt, when it was read
   effectiveGasPrice?: string; // wei, from the receipt
   reconciledAt?: string; // set on rows appended by `reconcile`
+  resolvedBy?: "receipt"; // set when `reconcile --txHash` resolved the row from the chain while the venue still said PENDING
 
   // Wallet balance snapshots (`baw wallet balance`), best-effort, live orders only.
   balancesBefore?: BalanceSnapshot | null;
@@ -106,6 +107,13 @@ export interface BalanceSnapshot {
   bnb?: string;
 }
 
-// Documented values of `marketStatus` in the Asset Market Status API.
-export const PROVIDER_SESSIONS = ["premarket", "regular", "postmarket", "overnight", "closed", "pause"] as const;
+// Values of `marketStatus` in the Asset Market Status API: the documented six, plus "offhours",
+// which is undocumented but was returned live for Ondo on a weekend (2026-10-10).
+export const PROVIDER_SESSIONS = ["premarket", "regular", "postmarket", "overnight", "closed", "pause", "offhours"] as const;
 export type ProviderSession = (typeof PROVIDER_SESSIONS)[number];
+
+/** A raw `marketStatus` as a known session label, or null. Also reads rows saved before a value was known. */
+export function toProviderSession(s: string | null | undefined): ProviderSession | null {
+  const v = (s ?? "").toLowerCase();
+  return (PROVIDER_SESSIONS as readonly string[]).includes(v) ? (v as ProviderSession) : null;
+}

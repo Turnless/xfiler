@@ -12,7 +12,7 @@ const cfg = (): Config => {
   return {
     live: false, maxUsdPerFill: 5, maxOpenUsd: 8, maxFillsPerDay: 12, cooldownSeconds: 20, budgetUsd: 3,
     killSwitchFailClosed: true, killFile: join(dir, "KILL"), adapter: "baw", bawBin: "baw", bscRpcUrl: "",
-    walletAddress: "", slippage: "1", maxQuoteSlippage: 0.01, bnbUsd: 0, dataDir: dir,
+    walletAddress: "", slippage: "1", maxQuoteSlippage: 0.01, bnbUsd: 0, maxVsReferenceBps: 100, requireReferencePrice: false, dataDir: dir,
   };
 };
 const ok = (data: unknown, prefix = "") => ({ stdout: prefix + JSON.stringify({ success: true, data }), stderr: "" });

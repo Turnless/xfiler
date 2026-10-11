@@ -1,6 +1,6 @@
 import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import type { FillRecord } from "./types.js";
+import { toProviderSession, type FillRecord } from "./types.js";
 
 export const fillsPath = (dir: string) => join(dir, "fills.jsonl");
 export const apiLogPath = (dir: string) => join(dir, "api-calls.jsonl");
@@ -97,7 +97,7 @@ export function renderTable(rows: FillRecord[], includeMock = false): string {
         r.symbol,
         r.side,
         r.session,
-        r.providerSession,
+        r.providerSession ?? toProviderSession(r.assetStatus),
         r.usdNotional.toFixed(2),
         r.quotePrice?.toFixed(4),
         r.fillPrice?.toFixed(4),

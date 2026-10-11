@@ -8,7 +8,7 @@ import type { Executor } from "./adapters/types.js";
 import { readFill } from "./chain.js";
 import { loadConfig, type Config } from "./config.js";
 import { openQty, parsePositive } from "./guards.js";
-import { runAttempt, describeProviders, reconcileRow, sellQtyAfterBuy, type ReceiptReader } from "./probe.js";
+import { runAttempt, describeProviders, reconcileFromTx, reconcileRow, sellQtyAfterBuy, type ReceiptReader } from "./probe.js";
 import { summarize } from "./stats.js";
 import { appendJsonl, fillsPath, floor8, ledger, readFills, renderTable } from "./store.js";
 import { UNRESOLVED, type FillRecord, type Provider, type RwaToken } from "./types.js";
@@ -19,7 +19,9 @@ const HELP = `xfiler <command> [options]
   fill       --provider P --symbol S --usd N [--live] [--roundtrip]
                                                         buy, then (with --roundtrip) sell it back
   sell       --provider P --symbol S [--qty N] [--live] sell what the ledger says we hold (default: all of it)
-  reconcile  [--id ROW (--orderId OID | --mark-failed)] re-poll unresolved orders and record the outcome
+  reconcile  [--id ROW (--orderId OID | --txHash HASH | --mark-failed)]
+                                                        re-poll unresolved orders and record the outcome;
+                                                        --txHash: resolve from the chain if the venue lags
   report     [--markdown] [--mode fills|quotes]         aggregate stats (quotes = quote-only data), or the markdown table
 Dry-run is the default. A real order needs --live AND LIVE=1 in .env, and passes the caps and kill-switch.
 New live orders are refused while any order is unresolved (SUBMITTING / PENDING / UNKNOWN): run reconcile.`;
@@ -33,6 +35,7 @@ const { positionals, values } = parseArgs({
     qty: { type: "string" },
     id: { type: "string" },
     orderId: { type: "string" },
+    txHash: { type: "string" },
     "mark-failed": { type: "boolean", default: false },
     live: { type: "boolean", default: false },
     roundtrip: { type: "boolean", default: false },
@@ -85,7 +88,13 @@ async function reconcile(cfg: Config): Promise<void> {
       console.log(`${row.id}: marked FAILED`);
       return;
     }
-    if (!values.orderId) throw new Error("--id needs --orderId OID (found in your wallet's order history) or --mark-failed");
+    if (values.txHash) {
+      const done = await reconcileFromTx(row, values.txHash, reader);
+      save(done);
+      console.log(`${row.id}: FINISHED from the chain (tx ${values.txHash}), fill ${done.fillAmount} at ${done.fillPrice}`);
+      return;
+    }
+    if (!values.orderId) throw new Error("--id needs --orderId OID (found in your wallet's order history), --txHash HASH (the swap on BscScan) or --mark-failed");
     const withId = { ...row, orderId: values.orderId };
     const done = await reconcileRow(withId, ex, reader);
     save(done ?? withId);
